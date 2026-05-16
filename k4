@@ -5,9 +5,9 @@ set -euo pipefail
 
 readonly CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/k4.config"
 
-readonly BOOK_DIR="/mnt/us/documents"
-readonly AUTHORIZED_KEYS_FILE="/mnt/us/koreader/settings/SSH/authorized_keys"
-readonly WALLPAPER_DIR="/mnt/us/wallpaper"
+book_dir="/mnt/us/documents"
+authorized_keys_file="/mnt/us/koreader/settings/SSH/authorized_keys"
+wallpaper_dir="/mnt/us/wallpaper"
 
 ip=""
 port="22"
@@ -21,9 +21,9 @@ Usage:
   k4 [SUBCOMMAND] [OPTIONS] FILE
 
 Subcommands:
-  book, b              Upload a book to $BOOK_DIR/ (default)
-  authorized-key, a    Append a public key to $AUTHORIZED_KEYS_FILE
-  wallpaper, w         Upload an image to $WALLPAPER_DIR/
+  book, b              Upload a book to $book_dir/ (default)
+  authorized-key, a    Append a public key to $authorized_keys_file
+  wallpaper, w         Upload an image to $wallpaper_dir/
 
 Options:
   --ip      <addr>   Device IP address (required if not in config)
@@ -37,6 +37,9 @@ Config:
       ip="192.168.1.100"
       port="22"
       user="root"
+      book_dir="$book_dir"
+      authorized_keys_file="$authorized_keys_file"
+      wallpaper_dir="$wallpaper_dir"
   Command-line options override config values.
 EOF
 }
@@ -103,9 +106,9 @@ validate_image() {
 }
 
 upload_book() {
-  summary "$BOOK_DIR/"
-  if scp -P "$port" "$file" "$user@$ip:$BOOK_DIR/"; then
-    ok "uploaded to $BOOK_DIR/"
+  summary "$book_dir/"
+  if scp -P "$port" "$file" "$user@$ip:$book_dir/"; then
+    ok "uploaded to $book_dir/"
   else
     fail "scp failed"
   fi
@@ -113,9 +116,9 @@ upload_book() {
 
 upload_authorized_key() {
   validate_public_key
-  summary "$AUTHORIZED_KEYS_FILE (append)"
-  if ssh -p "$port" "$user@$ip" "cat >> $AUTHORIZED_KEYS_FILE" < "$file"; then
-    ok "appended to $AUTHORIZED_KEYS_FILE"
+  summary "$authorized_keys_file (append)"
+  if ssh -p "$port" "$user@$ip" "cat >> $authorized_keys_file" < "$file"; then
+    ok "appended to $authorized_keys_file"
   else
     fail "ssh failed"
   fi
@@ -123,9 +126,9 @@ upload_authorized_key() {
 
 upload_wallpaper() {
   validate_image
-  summary "$WALLPAPER_DIR/"
-  if scp -P "$port" "$file" "$user@$ip:$WALLPAPER_DIR/"; then
-    ok "uploaded to $WALLPAPER_DIR/"
+  summary "$wallpaper_dir/"
+  if scp -P "$port" "$file" "$user@$ip:$wallpaper_dir/"; then
+    ok "uploaded to $wallpaper_dir/"
   else
     fail "scp failed"
   fi

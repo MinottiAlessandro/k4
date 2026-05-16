@@ -3,3 +3,9 @@
 ip="192.168.1.100"
 port="22"
 user="root"
+
+# Remote paths — defaults match a stock Kindle + KOReader setup.
+# Uncomment and edit only if your device differs.
+#book_dir="/mnt/us/documents"
+#authorized_keys_file="/mnt/us/koreader/settings/SSH/authorized_keys"
+#wallpaper_dir="/mnt/us/wallpaper"

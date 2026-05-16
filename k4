@@ -5,7 +5,7 @@ set -euo pipefail
 
 readonly CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/k4.config"
 
-readonly BOOK_DIR="/mnt/us/document"
+readonly BOOK_DIR="/mnt/us/documents"
 readonly AUTHORIZED_KEYS_FILE="/mnt/us/koreader/settings/SSH/authorized_keys"
 readonly WALLPAPER_DIR="/mnt/us/wallpaper"
 

@@ -1,0 +1,5 @@
+# Copy to ~/.config/k4.config and adjust.
+# Sourced as shell — use lowercase keys.
+ip="192.168.1.100"
+port="22"
+user="root"

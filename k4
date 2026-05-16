@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# k4 — push files to a Kindle running KOReader over SSH.
+
+set -euo pipefail
+
+readonly CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/k4.config"
+
+readonly BOOK_DIR="/mnt/us/document"
+readonly AUTHORIZED_KEYS_FILE="/mnt/us/koreader/settings/SSH/authorized_keys"
+readonly WALLPAPER_DIR="/mnt/us/wallpaper"
+
+ip=""
+port="22"
+user="root"
+
+usage() {
+  cat <<EOF
+k4 — push files to a Kindle running KOReader over SSH
+
+Usage:
+  k4 [SUBCOMMAND] [OPTIONS] FILE
+
+Subcommands:
+  book              Upload a book to $BOOK_DIR/ (default)
+  authorized-key    Append a public key to $AUTHORIZED_KEYS_FILE
+  wallpaper         Upload an image to $WALLPAPER_DIR/
+
+Options:
+  --ip      <addr>   Device IP address (required if not in config)
+  --port    <port>   SSH port (default: $port)
+  --user    <user>   SSH user (default: $user)
+  --help             Show this help
+
+Config:
+  Defaults are read from $CONFIG_FILE if present.
+  The file is sourced as shell; use lowercase keys:
+      ip="192.168.1.100"
+      port="22"
+      user="root"
+  Command-line options override config values.
+EOF
+}
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
+
+subcommand=""
+file=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ip)    ip="$2";   shift 2 ;;
+    --port)  port="$2"; shift 2 ;;
+    --user)  user="$2"; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    book|authorized-key|wallpaper)
+      subcommand="$1"; shift ;;
+    --) shift; break ;;
+    -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    *)
+      if [[ -z "$file" ]]; then file="$1"
+      else echo "unexpected argument: $1" >&2; exit 2
+      fi
+      shift ;;
+  esac
+done
+
+subcommand="${subcommand:-book}"
+
+bold=$(tput bold 2>/dev/null || true)
+reset=$(tput sgr0 2>/dev/null || true)
+green=$(tput setaf 2 2>/dev/null || true)
+red=$(tput setaf 1 2>/dev/null || true)
+dim=$(tput dim 2>/dev/null || true)
+
+err()  { echo "${red}error:${reset} $*" >&2; exit 1; }
+ok()   { echo "${green}✓${reset} $*"; }
+fail() { echo "${red}✗${reset} $*" >&2; exit 1; }
+
+[[ -n "$ip"   ]] || err "--ip is required (or set 'ip' in $CONFIG_FILE)"
+[[ -n "$file" ]] || err "missing FILE argument (run with --help for usage)"
+[[ -f "$file" ]] || err "file not found: $file"
+
+summary() {
+  echo "${bold}k4${reset} ${dim}─${reset} $subcommand"
+  echo "  file:   $file"
+  echo "  target: $user@$ip:$port"
+  echo "  dest:   $1"
+  echo
+}
+
+validate_public_key() {
+  ssh-keygen -l -f "$file" >/dev/null 2>&1 \
+    || fail "not a valid SSH public key: $file"
+}
+
+validate_image() {
+  local mime
+  mime=$(file --mime-type -b "$file" 2>/dev/null || true)
+  [[ "$mime" == image/* ]] || fail "not an image (mime: ${mime:-unknown}): $file"
+}
+
+upload_book() {
+  summary "$BOOK_DIR/"
+  if scp -P "$port" "$file" "$user@$ip:$BOOK_DIR/"; then
+    ok "uploaded to $BOOK_DIR/"
+  else
+    fail "scp failed"
+  fi
+}
+
+upload_authorized_key() {
+  validate_public_key
+  summary "$AUTHORIZED_KEYS_FILE (append)"
+  if ssh -p "$port" "$user@$ip" "cat >> $AUTHORIZED_KEYS_FILE" < "$file"; then
+    ok "appended to $AUTHORIZED_KEYS_FILE"
+  else
+    fail "ssh failed"
+  fi
+}
+
+upload_wallpaper() {
+  validate_image
+  summary "$WALLPAPER_DIR/"
+  if scp -P "$port" "$file" "$user@$ip:$WALLPAPER_DIR/"; then
+    ok "uploaded to $WALLPAPER_DIR/"
+  else
+    fail "scp failed"
+  fi
+}
+
+case "$subcommand" in
+  book)           upload_book ;;
+  authorized-key) upload_authorized_key ;;
+  wallpaper)      upload_wallpaper ;;
+esac

@@ -29,3 +29,11 @@ if (( ${#missing[@]} > 0 )); then
   echo "  debian:  sudo apt install openssh-client file"
   echo "  fedora:  sudo dnf install openssh-clients file"
 fi
+
+if ! command -v luac >/dev/null 2>&1; then
+  echo
+  echo "note: 'luac' not found — only needed for the 'add-patch' subcommand."
+  echo "  arch:    sudo pacman -S lua"
+  echo "  debian:  sudo apt install lua5.4"
+  echo "  fedora:  sudo dnf install lua"
+fi

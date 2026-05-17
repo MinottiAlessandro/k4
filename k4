@@ -8,6 +8,7 @@ readonly CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/k4.config"
 book_dir="/mnt/us/documents"
 authorized_keys_file="/mnt/us/koreader/settings/SSH/authorized_keys"
 wallpaper_dir="/mnt/us/wallpaper"
+patches_dir="/mnt/us/koreader/patches"
 
 ip=""
 port="22"
@@ -24,6 +25,8 @@ Subcommands:
   book, b              Upload a book to $book_dir/ (default)
   authorized-key, a    Append a public key to $authorized_keys_file
   wallpaper, w         Upload an image to $wallpaper_dir/
+  add-patch, p         Upload a lua patch to $patches_dir/
+                       (filename must be '<digits>-<name>.lua')
 
 Options:
   --ip      <addr>   Device IP address (required if not in config)
@@ -40,6 +43,7 @@ Config:
       book_dir="$book_dir"
       authorized_keys_file="$authorized_keys_file"
       wallpaper_dir="$wallpaper_dir"
+      patches_dir="$patches_dir"
   Command-line options override config values.
 EOF
 }
@@ -60,6 +64,7 @@ while [[ $# -gt 0 ]]; do
     book|b)            subcommand="book";           shift ;;
     authorized-key|a)  subcommand="authorized-key"; shift ;;
     wallpaper|w)       subcommand="wallpaper";      shift ;;
+    add-patch|p)       subcommand="add-patch";      shift ;;
     --) shift; break ;;
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     *)
@@ -105,6 +110,19 @@ validate_image() {
   [[ "$mime" == image/* ]] || fail "not an image (mime: ${mime:-unknown}): $file"
 }
 
+validate_lua_patch() {
+  local base lua_err
+  base=$(basename "$file")
+  [[ "$base" =~ ^[0-9]+-[A-Za-z0-9_-]+\.lua$ ]] \
+    || fail "filename must match '<digits>-<name>.lua' (e.g. 123-my_patch.lua): $base"
+  command -v luac >/dev/null 2>&1 \
+    || fail "luac not found — install 'lua' to validate patches"
+  if ! lua_err=$(luac -p "$file" 2>&1); then
+    fail "not a valid lua file: $file
+${lua_err}"
+  fi
+}
+
 upload_book() {
   summary "$book_dir/"
   if scp -P "$port" "$file" "$user@$ip:$book_dir/"; then
@@ -134,8 +152,19 @@ upload_wallpaper() {
   fi
 }
 
+upload_patch() {
+  validate_lua_patch
+  summary "$patches_dir/"
+  if scp -P "$port" "$file" "$user@$ip:$patches_dir/"; then
+    ok "uploaded to $patches_dir/"
+  else
+    fail "scp failed"
+  fi
+}
+
 case "$subcommand" in
   book)           upload_book ;;
   authorized-key) upload_authorized_key ;;
   wallpaper)      upload_wallpaper ;;
+  add-patch)      upload_patch ;;
 esac

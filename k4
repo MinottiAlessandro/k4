@@ -13,6 +13,7 @@ patches_dir="/mnt/us/koreader/patches"
 ip=""
 port="22"
 user="root"
+assume_yes=0
 
 usage() {
   cat <<EOF
@@ -32,6 +33,7 @@ Options:
   --ip      <addr>   Device IP address (required if not in config)
   --port    <port>   SSH port (default: $port)
   --user    <user>   SSH user (default: $user)
+  --yes, -y          Auto-create missing remote directories without prompting
   --help             Show this help
 
 Config:
@@ -60,6 +62,7 @@ while [[ $# -gt 0 ]]; do
     --ip)    ip="$2";   shift 2 ;;
     --port)  port="$2"; shift 2 ;;
     --user)  user="$2"; shift 2 ;;
+    --yes|-y)  assume_yes=1; shift ;;
     --help|-h) usage; exit 0 ;;
     book|b)            subcommand="book";           shift ;;
     authorized-key|a)  subcommand="authorized-key"; shift ;;
@@ -99,6 +102,31 @@ summary() {
   echo
 }
 
+ensure_remote_dir() {
+  local remote_dir="$1"
+  if ssh -p "$port" "$user@$ip" "test -d $remote_dir" 2>/dev/null; then
+    return 0
+  fi
+  echo "${red}!${reset} remote directory does not exist: $remote_dir"
+  local answer=""
+  if (( assume_yes )); then
+    answer="y"
+  elif [[ -t 0 ]]; then
+    read -r -p "create it? [y/N] " answer || answer=""
+  else
+    fail "remote directory missing and no TTY available; rerun with --yes to auto-create"
+  fi
+  case "$answer" in
+    y|Y|yes|YES) ;;
+    *) fail "aborted: remote directory not created" ;;
+  esac
+  if ssh -p "$port" "$user@$ip" "mkdir -p $remote_dir"; then
+    ok "created $remote_dir"
+  else
+    fail "failed to create $remote_dir"
+  fi
+}
+
 validate_public_key() {
   ssh-keygen -l -f "$file" >/dev/null 2>&1 \
     || fail "not a valid SSH public key: $file"
@@ -125,6 +153,7 @@ ${lua_err}"
 
 upload_book() {
   summary "$book_dir/"
+  ensure_remote_dir "$book_dir"
   if scp -P "$port" "$file" "$user@$ip:$book_dir/"; then
     ok "uploaded to $book_dir/"
   else
@@ -135,6 +164,7 @@ upload_book() {
 upload_authorized_key() {
   validate_public_key
   summary "$authorized_keys_file (append)"
+  ensure_remote_dir "$(dirname "$authorized_keys_file")"
   if ssh -p "$port" "$user@$ip" "cat >> $authorized_keys_file" < "$file"; then
     ok "appended to $authorized_keys_file"
   else
@@ -145,6 +175,7 @@ upload_authorized_key() {
 upload_wallpaper() {
   validate_image
   summary "$wallpaper_dir/"
+  ensure_remote_dir "$wallpaper_dir"
   if scp -P "$port" "$file" "$user@$ip:$wallpaper_dir/"; then
     ok "uploaded to $wallpaper_dir/"
   else
@@ -155,6 +186,7 @@ upload_wallpaper() {
 upload_patch() {
   validate_lua_patch
   summary "$patches_dir/"
+  ensure_remote_dir "$patches_dir"
   if scp -P "$port" "$file" "$user@$ip:$patches_dir/"; then
     ok "uploaded to $patches_dir/"
   else

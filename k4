@@ -104,9 +104,14 @@ summary() {
 
 ensure_remote_dir() {
   local remote_dir="$1"
-  if ssh -p "$port" "$user@$ip" "test -d $remote_dir" 2>/dev/null; then
-    return 0
-  fi
+  local rc=0
+  ssh -p "$port" "$user@$ip" "test -d $remote_dir" || rc=$?
+  case "$rc" in
+    0)   return 0 ;;
+    1)   ;;  # remote reported missing — fall through to prompt
+    255) fail "ssh connection failed — is $user@$ip:$port reachable?" ;;
+    *)   fail "unexpected ssh exit code $rc while checking $remote_dir" ;;
+  esac
   echo "${red}!${reset} remote directory does not exist: $remote_dir"
   local answer=""
   if (( assume_yes )); then

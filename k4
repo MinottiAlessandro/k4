@@ -14,13 +14,14 @@ ip=""
 port="22"
 user="root"
 assume_yes=0
+recursive=0
 
 usage() {
   cat <<EOF
 k4 — push files to a Kindle running KOReader over SSH
 
 Usage:
-  k4 [SUBCOMMAND] [OPTIONS] FILE
+  k4 [SUBCOMMAND] [OPTIONS] [PATH]
 
 Subcommands:
   book, b              Upload a book to $book_dir/ (default)
@@ -28,11 +29,14 @@ Subcommands:
   wallpaper, w         Upload an image to $wallpaper_dir/
   add-patch, p         Upload a lua patch to $patches_dir/
                        (filename must be '<digits>-<name>.lua')
+  check, c             Test the SSH connection and report remote dir status
 
 Options:
   --ip      <addr>   Device IP address (required if not in config)
   --port    <port>   SSH port (default: $port)
   --user    <user>   SSH user (default: $user)
+  --recursive, -r    Treat PATH as a directory and upload its top-level files
+                     (book, wallpaper, add-patch; non-matching files skipped)
   --yes, -y          Auto-create missing remote directories without prompting
   --help             Show this help
 
@@ -62,12 +66,14 @@ while [[ $# -gt 0 ]]; do
     --ip)    ip="$2";   shift 2 ;;
     --port)  port="$2"; shift 2 ;;
     --user)  user="$2"; shift 2 ;;
+    --recursive|-r) recursive=1; shift ;;
     --yes|-y)  assume_yes=1; shift ;;
     --help|-h) usage; exit 0 ;;
     book|b)            subcommand="book";           shift ;;
     authorized-key|a)  subcommand="authorized-key"; shift ;;
     wallpaper|w)       subcommand="wallpaper";      shift ;;
     add-patch|p)       subcommand="add-patch";      shift ;;
+    check|c)           subcommand="check";          shift ;;
     --) shift; break ;;
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     *)
@@ -90,13 +96,29 @@ err()  { echo "${red}error:${reset} $*" >&2; exit 1; }
 ok()   { echo "${green}✓${reset} $*"; }
 fail() { echo "${red}✗${reset} $*" >&2; exit 1; }
 
-[[ -n "$ip"   ]] || err "--ip is required (or set 'ip' in $CONFIG_FILE)"
-[[ -n "$file" ]] || err "missing FILE argument (run with --help for usage)"
-[[ -f "$file" ]] || err "file not found: $file"
+[[ -n "$ip" ]] || err "--ip is required (or set 'ip' in $CONFIG_FILE)"
+
+if [[ "$subcommand" == "check" ]]; then
+  (( recursive )) && err "--recursive is not valid with 'check'"
+elif (( recursive )); then
+  case "$subcommand" in
+    book|wallpaper|add-patch) ;;
+    *) err "--recursive is only valid with book, wallpaper, or add-patch" ;;
+  esac
+  [[ -n "$file" ]] || err "missing DIR argument (run with --help for usage)"
+  [[ -d "$file" ]] || err "not a directory: $file"
+else
+  [[ -n "$file" ]] || err "missing FILE argument (run with --help for usage)"
+  [[ -f "$file" ]] || err "file not found: $file"
+fi
 
 summary() {
   echo "${bold}k4${reset} ${dim}─${reset} $subcommand"
-  echo "  file:   $file"
+  if (( recursive )); then
+    echo "  source: $file/ ${dim}(recursive, top-level files)${reset}"
+  else
+    echo "  file:   $file"
+  fi
   echo "  target: $user@$ip:$port"
   echo "  dest:   $1"
   echo
@@ -132,42 +154,73 @@ ensure_remote_dir() {
   fi
 }
 
+# Validators take a path and print nothing on success; on failure they print a
+# one-line reason and return 1. Callers decide whether to fail or skip.
 validate_public_key() {
-  ssh-keygen -l -f "$file" >/dev/null 2>&1 \
-    || fail "not a valid SSH public key: $file"
+  ssh-keygen -l -f "$1" >/dev/null 2>&1 && return 0
+  echo "not a valid SSH public key"; return 1
 }
 
 validate_image() {
   local mime
-  mime=$(file --mime-type -b "$file" 2>/dev/null || true)
-  [[ "$mime" == image/* ]] || fail "not an image (mime: ${mime:-unknown}): $file"
+  mime=$(file --mime-type -b "$1" 2>/dev/null || true)
+  [[ "$mime" == image/* ]] && return 0
+  echo "not an image (mime: ${mime:-unknown})"; return 1
 }
 
 validate_lua_patch() {
   local base lua_err
-  base=$(basename "$file")
-  [[ "$base" =~ ^[0-9]+-[A-Za-z0-9_-]+\.lua$ ]] \
-    || fail "filename must match '<digits>-<name>.lua' (e.g. 123-my_patch.lua): $base"
-  command -v luac >/dev/null 2>&1 \
-    || fail "luac not found — install 'lua' to validate patches"
-  if ! lua_err=$(luac -p "$file" 2>&1); then
-    fail "not a valid lua file: $file
-${lua_err}"
+  base=$(basename "$1")
+  if [[ ! "$base" =~ ^[0-9]+-[A-Za-z0-9_-]+\.lua$ ]]; then
+    echo "filename must match '<digits>-<name>.lua' (e.g. 123-my_patch.lua)"; return 1
+  fi
+  command -v luac >/dev/null 2>&1 || { echo "luac not found — install 'lua' to validate patches"; return 1; }
+  if ! lua_err=$(luac -p "$1" 2>&1); then
+    echo "not a valid lua file: $lua_err"; return 1
   fi
 }
 
-upload_book() {
-  summary "$book_dir/"
-  ensure_remote_dir "$book_dir"
-  if scp -P "$port" "$file" "$user@$ip:$book_dir/"; then
-    ok "uploaded to $book_dir/"
+# Upload one or more files to a remote directory via scp, validating each with
+# the given validator function ("" = no validation). Honors $recursive.
+upload_to() {
+  local dest_dir="$1" validator="${2:-}"
+  summary "$dest_dir/"
+
+  # Validate locally first — don't touch the network for a bad file/empty dir.
+  local files=() f reason
+  if (( recursive )); then
+    shopt -s nullglob
+    for f in "$file"/*; do
+      [[ -f "$f" ]] || continue   # top-level files only; skip subdirs
+      if [[ -n "$validator" ]] && ! reason=$("$validator" "$f"); then
+        echo "  ${dim}skip${reset} $(basename "$f") — $reason"
+        continue
+      fi
+      files+=("$f")
+    done
+    shopt -u nullglob
+    (( ${#files[@]} )) || fail "no matching files to upload in $file/"
+  else
+    if [[ -n "$validator" ]] && ! reason=$("$validator" "$file"); then
+      fail "$reason: $file"
+    fi
+    files=("$file")
+  fi
+
+  ensure_remote_dir "$dest_dir"
+
+  if scp -P "$port" "${files[@]}" "$user@$ip:$dest_dir/"; then
+    ok "uploaded ${#files[@]} file(s) to $dest_dir/"
   else
     fail "scp failed"
   fi
 }
 
 upload_authorized_key() {
-  validate_public_key
+  local reason
+  if ! reason=$(validate_public_key "$file"); then
+    fail "$reason: $file"
+  fi
   summary "$authorized_keys_file (append)"
   ensure_remote_dir "$(dirname "$authorized_keys_file")"
   if ssh -p "$port" "$user@$ip" "cat >> $authorized_keys_file" < "$file"; then
@@ -177,31 +230,37 @@ upload_authorized_key() {
   fi
 }
 
-upload_wallpaper() {
-  validate_image
-  summary "$wallpaper_dir/"
-  ensure_remote_dir "$wallpaper_dir"
-  if scp -P "$port" "$file" "$user@$ip:$wallpaper_dir/"; then
-    ok "uploaded to $wallpaper_dir/"
-  else
-    fail "scp failed"
+do_check() {
+  echo "${bold}k4${reset} ${dim}─${reset} check"
+  echo "  target: $user@$ip:$port"
+  echo
+  local dirs out rc=0
+  dirs="$book_dir $(dirname "$authorized_keys_file") $wallpaper_dir $patches_dir"
+  out=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -p "$port" "$user@$ip" \
+    "for d in $dirs; do if [ -d \"\$d\" ]; then echo \"ok \$d\"; else echo \"missing \$d\"; fi; done" 2>&1) || rc=$?
+  if (( rc != 0 )); then
+    [[ -n "$out" ]] && echo "$out" >&2
+    fail "cannot connect to $user@$ip:$port — check IP, port, network, and that your SSH key is authorized"
   fi
-}
-
-upload_patch() {
-  validate_lua_patch
-  summary "$patches_dir/"
-  ensure_remote_dir "$patches_dir"
-  if scp -P "$port" "$file" "$user@$ip:$patches_dir/"; then
-    ok "uploaded to $patches_dir/"
-  else
-    fail "scp failed"
-  fi
+  ok "connected to $user@$ip:$port"
+  echo
+  echo "  remote directories:"
+  local line status path
+  while IFS= read -r line; do
+    status=${line%% *}
+    path=${line#* }
+    if [[ "$status" == "ok" ]]; then
+      echo "    ${green}✓${reset} $path"
+    else
+      echo "    ${red}✗${reset} $path ${dim}(missing)${reset}"
+    fi
+  done <<< "$out"
 }
 
 case "$subcommand" in
-  book)           upload_book ;;
+  book)           upload_to "$book_dir" ;;
+  wallpaper)      upload_to "$wallpaper_dir" validate_image ;;
+  add-patch)      upload_to "$patches_dir" validate_lua_patch ;;
   authorized-key) upload_authorized_key ;;
-  wallpaper)      upload_wallpaper ;;
-  add-patch)      upload_patch ;;
+  check)          do_check ;;
 esac

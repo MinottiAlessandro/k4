@@ -1,4 +1,4 @@
-# k4
+# k4 - v1.0
 
 A single-file bash CLI that pushes files to a Kindle running [KOReader](https://github.com/koreader/koreader) over SSH — books, wallpapers, lua patches, and SSH keys.
 

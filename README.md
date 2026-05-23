@@ -14,7 +14,7 @@ cd k4
 
 This copies `k4` to `~/.local/bin` (override with `PREFIX=...`) and warns about anything missing.
 
-**Requirements:** `ssh`, `scp`, `ssh-keygen`, `file` (all from `openssh-client` + `file`). `luac` (from the `lua` package) is only needed for the `add-patch` subcommand.
+**Requirements:** `ssh`, `scp`, `ssh-keygen`, `file` (all from `openssh-client` + `file`). `luac` (from the `lua` package) is only needed for `add-patch`, and `git` only for `update`.
 
 ## Configure
 
@@ -45,6 +45,7 @@ k4 [SUBCOMMAND] [OPTIONS] [PATH]
 | `wallpaper` | `w` | Upload an image to `/mnt/us/wallpaper/` |
 | `add-patch` | `p` | Upload a lua patch to `/mnt/us/koreader/patches/` |
 | `check` | `c` | Test the connection and report which remote dirs exist |
+| `update` | `u` | Pull the latest `k4` from your clone and reinstall |
 
 ### Examples
 
@@ -64,6 +65,9 @@ k4 add-patch 2-dark-mode.lua
 
 # Check connectivity and remote directories
 k4 check
+
+# Update k4 itself (git pull on your clone, then reinstall)
+k4 update
 
 # Upload every top-level file in a directory
 k4 book -r ~/Downloads/epubs/
@@ -85,6 +89,7 @@ k4 book -r ~/Downloads/epubs/
 - **Validation runs locally first.** Wallpapers must be images, patches must be valid lua named `<digits>-<name>.lua` (e.g. `123-my_patch.lua`), and keys must parse as SSH public keys — checked before anything touches the network.
 - **Recursive uploads** cover top-level files only (subdirectories are skipped). Files that fail validation are reported and skipped; the rest go up in a single `scp` connection.
 - **Missing remote directories** prompt you to create them, or pass `--yes` to create automatically.
+- **`update`** does a fast-forward `git pull` on the clone you installed from, then re-runs `install.sh`. It refuses if that clone has uncommitted changes, and does nothing if you're already up to date.
 
 ## License
 

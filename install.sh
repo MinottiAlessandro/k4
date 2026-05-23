@@ -12,6 +12,11 @@ mkdir -p "$BIN_DIR"
 install -m 0755 "$here/k4" "$BIN_DIR/k4"
 echo "installed: $BIN_DIR/k4"
 
+# Record where this clone lives so 'k4 update' can find it later.
+STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/k4"
+mkdir -p "$STATE_DIR"
+printf '%s\n' "$here" > "$STATE_DIR/source"
+
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) echo "note: $BIN_DIR is not in PATH — add it to use 'k4'" ;;
@@ -36,4 +41,12 @@ if ! command -v luac >/dev/null 2>&1; then
   echo "  arch:    sudo pacman -S lua"
   echo "  debian:  sudo apt install lua5.4"
   echo "  fedora:  sudo dnf install lua"
+fi
+
+if ! command -v git >/dev/null 2>&1; then
+  echo
+  echo "note: 'git' not found — only needed for the 'update' subcommand."
+  echo "  arch:    sudo pacman -S git"
+  echo "  debian:  sudo apt install git"
+  echo "  fedora:  sudo dnf install git"
 fi

@@ -30,6 +30,7 @@ Subcommands:
   add-patch, p         Upload a lua patch to $patches_dir/
                        (filename must be '<digits>-<name>.lua')
   check, c             Test the SSH connection and report remote dir status
+  update, u            Pull the latest k4 from its git clone and reinstall
 
 Options:
   --ip      <addr>   Device IP address (required if not in config)
@@ -74,6 +75,7 @@ while [[ $# -gt 0 ]]; do
     wallpaper|w)       subcommand="wallpaper";      shift ;;
     add-patch|p)       subcommand="add-patch";      shift ;;
     check|c)           subcommand="check";          shift ;;
+    update|u)          subcommand="update";         shift ;;
     --) shift; break ;;
     -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     *)
@@ -96,21 +98,30 @@ err()  { echo "${red}error:${reset} $*" >&2; exit 1; }
 ok()   { echo "${green}✓${reset} $*"; }
 fail() { echo "${red}✗${reset} $*" >&2; exit 1; }
 
-[[ -n "$ip" ]] || err "--ip is required (or set 'ip' in $CONFIG_FILE)"
-
-if [[ "$subcommand" == "check" ]]; then
-  (( recursive )) && err "--recursive is not valid with 'check'"
-elif (( recursive )); then
-  case "$subcommand" in
-    book|wallpaper|add-patch) ;;
-    *) err "--recursive is only valid with book, wallpaper, or add-patch" ;;
-  esac
-  [[ -n "$file" ]] || err "missing DIR argument (run with --help for usage)"
-  [[ -d "$file" ]] || err "not a directory: $file"
-else
-  [[ -n "$file" ]] || err "missing FILE argument (run with --help for usage)"
-  [[ -f "$file" ]] || err "file not found: $file"
-fi
+case "$subcommand" in
+  update)
+    # Local operation: no device, no file argument.
+    (( recursive )) && err "--recursive is not valid with 'update'"
+    ;;
+  check)
+    [[ -n "$ip" ]] || err "--ip is required (or set 'ip' in $CONFIG_FILE)"
+    (( recursive )) && err "--recursive is not valid with 'check'"
+    ;;
+  *)
+    [[ -n "$ip" ]] || err "--ip is required (or set 'ip' in $CONFIG_FILE)"
+    if (( recursive )); then
+      case "$subcommand" in
+        book|wallpaper|add-patch) ;;
+        *) err "--recursive is only valid with book, wallpaper, or add-patch" ;;
+      esac
+      [[ -n "$file" ]] || err "missing DIR argument (run with --help for usage)"
+      [[ -d "$file" ]] || err "not a directory: $file"
+    else
+      [[ -n "$file" ]] || err "missing FILE argument (run with --help for usage)"
+      [[ -f "$file" ]] || err "file not found: $file"
+    fi
+    ;;
+esac
 
 summary() {
   echo "${bold}k4${reset} ${dim}─${reset} $subcommand"
@@ -257,10 +268,67 @@ do_check() {
   done <<< "$out"
 }
 
+do_update() {
+  command -v git >/dev/null 2>&1 || fail "git not found — install git to use 'update'"
+
+  # Locate the source clone: prefer the path recorded by install.sh, else fall
+  # back to this script's own directory (covers running ./k4 from the clone).
+  local state_file="${XDG_DATA_HOME:-$HOME/.local/share}/k4/source"
+  local repo=""
+  [[ -f "$state_file" ]] && repo=$(< "$state_file")
+  if [[ -z "$repo" || ! -d "$repo/.git" ]]; then
+    local self_dir
+    self_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    [[ -d "$self_dir/.git" ]] && repo="$self_dir"
+  fi
+  [[ -n "$repo" && -d "$repo/.git" ]] || \
+    fail "can't locate the k4 git clone — reinstall with install.sh, or run 'update' from inside the clone"
+
+  echo "${bold}k4${reset} ${dim}─${reset} update"
+  echo "  repo: $repo"
+  echo
+
+  # Don't clobber local edits.
+  [[ -z "$(git -C "$repo" status --porcelain)" ]] || \
+    fail "clone has uncommitted changes: $repo — commit or stash first"
+
+  echo "  fetching..."
+  git -C "$repo" fetch --quiet || fail "git fetch failed"
+
+  local local_rev remote_rev base_rev branch
+  branch=$(git -C "$repo" rev-parse --abbrev-ref HEAD)
+  local_rev=$(git -C "$repo" rev-parse @)
+  remote_rev=$(git -C "$repo" rev-parse '@{u}' 2>/dev/null) || \
+    fail "no upstream branch set for '$branch' — set one with: git -C $repo branch --set-upstream-to=origin/$branch"
+  base_rev=$(git -C "$repo" merge-base @ '@{u}')
+
+  if [[ "$local_rev" == "$remote_rev" ]]; then
+    ok "already up to date"
+    return 0
+  elif [[ "$local_rev" == "$base_rev" ]]; then
+    echo "  update available — pulling..."
+    git -C "$repo" pull --ff-only --quiet || fail "git pull failed"
+    ok "pulled latest"
+  elif [[ "$remote_rev" == "$base_rev" ]]; then
+    ok "clone is ahead of upstream — nothing to update"
+    return 0
+  else
+    fail "clone and upstream have diverged: $repo — resolve manually"
+  fi
+
+  echo "  reinstalling..."
+  if bash "$repo/install.sh"; then
+    ok "k4 updated"
+  else
+    fail "install.sh failed"
+  fi
+}
+
 case "$subcommand" in
   book)           upload_to "$book_dir" ;;
   wallpaper)      upload_to "$wallpaper_dir" validate_image ;;
   add-patch)      upload_to "$patches_dir" validate_lua_patch ;;
   authorized-key) upload_authorized_key ;;
   check)          do_check ;;
+  update)         do_update ;;
 esac
